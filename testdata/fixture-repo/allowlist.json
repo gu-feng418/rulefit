@@ -1,0 +1,10 @@
+[
+  ".go",
+  ".json",
+  ".json5",
+  ".properties",
+  ".ts",
+  ".tsx",
+  ".yml",
+  ".yaml"
+]

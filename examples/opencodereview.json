@@ -1,0 +1,15 @@
+{
+  "allowlist": {
+    "file": "internal/config/allowlist/supported_file_types.json",
+    "selector": "[]"
+  },
+  "rules": {
+    "file": "internal/config/rules/system_rules.json",
+    "default_selector": "default_rule",
+    "map_selector": "path_rule_map"
+  },
+  "docs_dir": "internal/config/rules/rule_docs",
+  "placeholder_extensions": [],
+  "ignore_extensions": [],
+  "ignore_patterns": []
+}

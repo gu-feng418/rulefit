@@ -1,0 +1,13 @@
+# binaries
+/rulefit
+/rulefit.exe
+
+# go test / coverage output
+*.out
+coverage.out
+coverage.html
+
+# editor
+.idea/
+.vscode/
+*.swp

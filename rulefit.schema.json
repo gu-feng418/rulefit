@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/rulefit/rulefit.schema.json",
+  "title": "rulefit audit configuration",
+  "description": "Describes where the audited tool keeps its file-type allowlist and its path-to-rule map, and where inside those files the data lives.",
+  "type": "object",
+  "required": ["allowlist", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "allowlist": {
+      "type": "object",
+      "required": ["file"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Path to the file holding the accepted file extensions, relative to --root."
+        },
+        "selector": {
+          "type": "string",
+          "description": "Dotted path to the JSON array of extensions. \"[]\" means the whole document is the array."
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "required": ["file"],
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "Path to the file holding the default rule and the path-to-rule map, relative to --root."
+        },
+        "default_selector": {
+          "type": "string",
+          "description": "Dotted path to the fallback rule name, for example \"default_rule\"."
+        },
+        "map_selector": {
+          "type": "string",
+          "description": "Dotted path to the object whose keys are glob patterns and whose values are rule names."
+        }
+      }
+    },
+    "docs_dir": {
+      "type": "string",
+      "description": "Directory holding the rule documents, relative to --root. Omit to skip the reachability and missing-document checks."
+    },
+    "ignore_extensions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Extensions that are expected to fall through to the default rule."
+    },
+    "placeholder_extensions": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Extensions whose allowlist entry exists only to satisfy a formatter or a compound extension."
+    },
+    "ignore_patterns": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Glob patterns to exclude from the collision check, for intentional overlaps."
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "allowlist": {
+    "file": "allowlist.json",
+    "selector": "[]"
+  },
+  "rules": {
+    "file": "rules.json",
+    "default_selector": "default_rule",
+    "map_selector": "path_rule_map"
+  },
+  "docs_dir": "docs"
+}

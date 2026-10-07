@@ -1,0 +1,11 @@
+{
+  "default_rule": "default.md",
+  "path_rule_map": {
+    "**/*.properties": "properties.md",
+    "**/*.{json,json5}": "json.md",
+    ".github/workflows/**/*.{yaml,yml}": "github_workflows.md",
+    "**/*.{yaml,yml}": "yaml.md",
+    "**/*.{ts,tsx}": "ts.md",
+    "**/*.go": "go.md"
+  }
+}
