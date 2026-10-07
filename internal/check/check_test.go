@@ -1,4 +1,4 @@
-﻿package check
+package check
 
 import (
 	"os"
@@ -276,4 +276,3 @@ func TestRunDoesNotReportDisjointExtensionsAsShadowing(t *testing.T) {
 		t.Fatalf("disjoint extensions must not collide, got %+v", got)
 	}
 }
-

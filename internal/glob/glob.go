@@ -6,13 +6,13 @@
 //
 // Within one path segment (`/` always separates segments):
 //
-//	*        any run of characters, including none
-//	?        exactly one character
-//	[a-z]    one character from the set; a leading ! or ^ negates the set
-//	\x       the literal character x
-//	{...}    alternation, may nest, always expands before matching
+//	"*"      any run of characters, including none
+//	"?"      exactly one character
+//	"[a-z]"  one character from the set; a leading "!" or "^" negates the set
+//	"\x"     the literal character x
+//	"{...}"  alternation, may nest, always expands before matching
 //
-// The segment `**` on its own matches zero or more whole segments. Every other
+// The segment "**" on its own matches zero or more whole segments. Every other
 // segment matches exactly one segment.
 //
 // Matching is byte-oriented and case-sensitive.
@@ -287,10 +287,10 @@ func matchSegment(seg Segment, s string, ei, ci int, memo map[[2]int]bool) bool 
 type braceStatus int
 
 const (
-	bracesExpanded braceStatus = iota // at least one group was expanded
-	bracesNone                        // no braces anywhere
-	bracesUnbalanced                  // an unpaired brace was found and kept literal
-	bracesCapped                      // expansion hit maxAlternates
+	bracesExpanded   braceStatus = iota // at least one group was expanded
+	bracesNone                          // no braces anywhere
+	bracesUnbalanced                    // an unpaired brace was found and kept literal
+	bracesCapped                        // expansion hit maxAlternates
 )
 
 // expandBraces expands every top-level and nested `{a,b}` group. Unpaired braces

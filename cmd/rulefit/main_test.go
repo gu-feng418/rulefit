@@ -1,4 +1,4 @@
-﻿package main
+package main
 
 import (
 	"bytes"
@@ -142,4 +142,3 @@ func TestCheckFailsOnTheRealWorldExample(t *testing.T) {
 		t.Fatalf("exit = %d, want 2", code)
 	}
 }
-

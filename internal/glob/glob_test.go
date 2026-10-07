@@ -174,12 +174,12 @@ func TestFindOverlap(t *testing.T) {
 	}
 
 	tests := []struct {
-		name      string
-		a, b      string
-		accept    func(string) bool
-		wantNil   bool
-		wantPath  string
-		wantKind  Kind
+		name     string
+		a, b     string
+		accept   func(string) bool
+		wantNil  bool
+		wantPath string
+		wantKind Kind
 	}{
 		{
 			name:     "workflow rule is contained by the .github catch-all",

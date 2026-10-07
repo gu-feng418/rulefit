@@ -1,4 +1,4 @@
-﻿// Package check turns a resolved configuration into findings. Every finding is
+// Package check turns a resolved configuration into findings. Every finding is
 // derived from the configuration itself 鈥?no repository scan, no guessing 鈥?so
 // the same input always produces the same output, which is what makes the tool
 // usable as a CI gate.
@@ -506,4 +506,3 @@ func matchesAnyPattern(patterns []string, subject string) bool {
 	}
 	return false
 }
-

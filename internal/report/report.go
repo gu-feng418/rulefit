@@ -1,4 +1,4 @@
-﻿// Package report renders audit results. Text output is for humans, JSON for
+// Package report renders audit results. Text output is for humans, JSON for
 // other tools, and SARIF for code-scanning UIs such as GitHub's.
 package report
 
@@ -192,4 +192,3 @@ func WriteSARIF(w io.Writer, res *check.Result, rulesFile, allowlistFile string)
 	enc.SetIndent("", "  ")
 	return enc.Encode(doc)
 }
-

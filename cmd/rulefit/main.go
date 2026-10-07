@@ -1,4 +1,4 @@
-﻿// Command rulefit audits the "which files do we review, and which rule applies"
+// Command rulefit audits the "which files do we review, and which rule applies"
 // configuration of a code-review or static-analysis tool.
 //
 // It answers the questions that are invisible in a large path-to-rule map:
@@ -174,13 +174,13 @@ func runExplain(args []string) int {
 
 // Resolution describes how the audited tool would treat one path.
 type Resolution struct {
-	Path         string   `json:"path"`
-	Extension    string   `json:"extension"`
-	Reviewed     bool     `json:"reviewed"`
-	Rule         string   `json:"rule"`
-	Pattern      string   `json:"pattern,omitempty"`
-	Index        int      `json:"index,omitempty"`
-	AlsoMatched  []Match  `json:"also_matched,omitempty"`
+	Path        string  `json:"path"`
+	Extension   string  `json:"extension"`
+	Reviewed    bool    `json:"reviewed"`
+	Rule        string  `json:"rule"`
+	Pattern     string  `json:"pattern,omitempty"`
+	Index       int     `json:"index,omitempty"`
+	AlsoMatched []Match `json:"also_matched,omitempty"`
 }
 
 // Match is one additional pattern that would have matched.
@@ -262,4 +262,3 @@ func fails(res *check.Result, threshold check.Severity) bool {
 	}
 	return false
 }
-

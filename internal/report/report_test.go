@@ -1,4 +1,4 @@
-﻿package report
+package report
 
 import (
 	"bytes"
@@ -157,4 +157,3 @@ func TestWriteSARIFExpandsAggregatedFindings(t *testing.T) {
 		t.Fatalf("a finding with a declaration index should carry a line number")
 	}
 }
-
