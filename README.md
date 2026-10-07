@@ -40,8 +40,8 @@ WARNING (5)
 | `missing-rule-document` | A pattern points at a rule document that does not exist. | error |
 | `unbalanced-pattern` | The pattern uses braces the tool does not treat as alternation, so it silently means something else. | error |
 
-Every finding either carries a **witness** — a concrete path that both patterns
-match, checked with the matcher before it is reported — or is marked
+Every finding either carries a **witness** 鈥?a concrete path that both patterns
+match, checked with the matcher before it is reported 鈥?or is marked
 `[unproven]`. There is no third state in which the tool claims certainty it does
 not have.
 
@@ -74,20 +74,23 @@ for usage errors, so it drops straight into CI:
 - run: go run ./cmd/rulefit check --config .rulefit.json --strict
 ```
 
-## What it found on its first real configuration
+## What the first real audit found
 
-Pointing it at `alibaba/open-code-review` turned up a genuine inconsistency: the
-rule map declares `"**/*.R": "r.md"` on line 37, the allowlist contains `".r"` but
-not `".R"`, and the tool lower-cases patterns before matching — so the rule and its
-allowlist entry disagree, and `r.md` reads as unreachable.
+Pointing it at `alibaba/open-code-review` produced **no defect in that repository
+and five bugs in `rulefit`.** The headline finding of the first run — that
+`"**/*.R": "r.md"` could never fire because the allowlist holds `".r"` — was a
+false positive: that tool lower-cases both sides before matching, so the rule is
+fine. `rulefit` reads text; the tool it audits may normalize that text first, and
+that gap is now an explicit configuration key rather than a guess.
 
-That audit also found two real bugs in `rulefit` itself, both now pinned by tests:
-every whole-file rule (`**/pom.xml`, `**/package.json`) was reported as dead
-because probes were derived from the allowlist alone, and every reported line
-number was off by the depth of the selected JSON subtree.
+The bugs the audit exposed, all now pinned by tests: whole-file rules
+(`**/pom.xml`, `**/package.json`) reported as dead, file names built from a starred
+pattern invisible to the probe set, line numbers short by the depth of the JSON
+subtree, shadow findings emitted in the wrong direction, and an encoding trap that
+made a configuration file unparseable.
 
-The full report, the reasoning, and the false positives that were removed rather
-than shipped are written up in
+The full report, the bug table, and the false positive that was removed rather than
+shipped are in
 [docs/findings/opencodereview-2026-10.md](docs/findings/opencodereview-2026-10.md).
 
 ## Configuration
@@ -114,6 +117,10 @@ files hold the two halves and where inside them:
   `[]` means the document itself is the array.
 * `docs_dir` enables the reachability and missing-document checks. Leave it out
   if rules are not files.
+* `case_insensitive` states that the audited tool folds case before comparing
+  patterns and file types. Leave it out 鈥?meaning `false` 鈥?when the tool compares
+  the configuration as written. `rulefit` cannot infer this, and guessing it wrong
+  produces findings that are wrong in both directions, so it is explicit.
 * `ignore_extensions` lists file types that are *expected* to fall through to the
   default rule, so they stop being reported.
 * `placeholder_extensions` lists entries that exist only to satisfy a formatter
@@ -135,14 +142,12 @@ behaviour, and `rulefit` reports findings against line numbers in that order.
 | `**` | zero or more whole path segments |
 | `\x` | the literal character `x` |
 
-Matching is byte-oriented and **case-sensitive**. This matters more than it
-sounds: the first real configuration audited contained `"**/*.R": "r.md"` against
-an allowlist entry of `".r"`, which is the inconsistency
-[docs/findings/opencodereview-2026-10.md](docs/findings/opencodereview-2026-10.md)
-is about. Real tools often lowercase patterns and paths before matching; if yours
-does, note that `rulefit` audits the *text* of the configuration, so it reports the
-mismatch and leaves the decision to you — either fix the pattern or change the
-matching.
+Matching is byte-oriented and **case-sensitive**, which is what a tool that
+compares the configuration as written does. Tools that fold case before comparing
+鈥?`alibaba/open-code-review` is one: it lower-cases both the pattern and the path,
+and lower-cases the extension when consulting its allowlist 鈥?are described with
+`"case_insensitive": true`, and then `rulefit` folds the same way instead of
+reporting a mismatch that is not one.
 
 ## Scope and non-goals
 
@@ -191,9 +196,9 @@ Planned next, in order:
 ## AI assistance
 
 Parts of this repository were written with AI assistance, and the maintainer
-reviews and can explain every line. The design rationale — why overlap detection
+reviews and can explain every line. The design rationale 鈥?why overlap detection
 is a product construction instead of a probe heuristic, and which bugs the
-property tests and the first real audit caught — is written up in
+property tests and the first real audit caught 鈥?is written up in
 [docs/design.md](docs/design.md). Bug reports that point at places where the
 reasoning is wrong are especially welcome.
 
@@ -211,3 +216,4 @@ is everything else.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+

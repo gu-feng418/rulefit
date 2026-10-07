@@ -2,6 +2,7 @@
   "default_rule": "default.md",
   "path_rule_map": {
     "**/pom.xml": "pom_xml.md",
+    "**/*.R": "r.md",
     "**/*.{json,json5}": "json.md",
     "**/package.json": "package_json.md",
     "**/*.{go,tmpl}": "go.md"

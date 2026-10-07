@@ -2,6 +2,7 @@
   ".go",
   ".json",
   ".json5",
-  ".xml",
-  ".tmpl"
+  ".r",
+  ".tmpl",
+  ".xml"
 ]

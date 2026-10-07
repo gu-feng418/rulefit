@@ -5,5 +5,7 @@
     "default_selector": "default_rule",
     "map_selector": "path_rule_map"
   },
-  "docs_dir": "docs"
+  "docs_dir": "docs",
+  "case_insensitive": true
 }
+

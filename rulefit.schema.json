@@ -45,6 +45,11 @@
       "type": "string",
       "description": "Directory holding the rule documents, relative to --root. Omit to skip the reachability and missing-document checks."
     },
+    "case_insensitive": {
+      "type": "boolean",
+      "default": false,
+      "description": "Set when the audited tool lower-cases patterns and file types before comparing them, so that rulefit folds the same way instead of reporting a case mismatch that is not a defect."
+    },
     "ignore_extensions": {
       "type": "array",
       "items": { "type": "string" },

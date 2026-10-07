@@ -128,7 +128,7 @@ func Run(cfg *config.Config, strict bool) *Result {
 
 	patterns := make([]glob.Pattern, len(cfg.PathRules))
 	for i, pr := range cfg.PathRules {
-		patterns[i] = glob.Parse(pr.Pattern)
+		patterns[i] = glob.Parse(cfg.Normalize(pr.Pattern))
 		if patterns[i].Warning != "" {
 			res.Findings = append(res.Findings, Finding{
 				Code:     CodeUnbalancedPattern,
@@ -447,22 +447,23 @@ func probePaths(cfg *config.Config) []string {
 		names = append(names, name)
 	}
 
-	// With a stem, without one, and case-folded: rules are written in all three
-	// shapes in real allowlists ("**/*.go", "**/Makefile", "**/*.R").
+	// With a stem and without one: rules are written in both shapes in real
+	// allowlists ("**/*.go" and "**/Makefile"). Both are folded through
+	// Config.Normalize, so a case-folding tool does not need the variants.
 	for _, ext := range cfg.Extensions {
-		bare := strings.TrimPrefix(ext, ".")
-		add("probe" + ext)
+		bare := strings.TrimPrefix(cfg.Normalize(ext), ".")
+		add(cfg.Normalize("probe" + ext))
 		add(bare)
-		add(strings.ToUpper(bare))
-		add(strings.ToLower(bare))
 	}
 
 	for _, base := range literalBases(cfg) {
 		for _, ext := range cfg.Extensions {
 			// "pom" + ".xml" is the probe that proves "**/pom.xml" is alive, and
 			// it is still a path the allowlist genuinely permits.
-			add(base + ext)
-			add(strings.ToLower(base) + ext)
+			add(cfg.Normalize(base + ext))
+			// "Cargo" + "toml" needs the dot the base dropped, so try the base
+			// with the extension appended after a separator as well.
+			add(cfg.Normalize(base + "." + strings.TrimPrefix(ext, ".")))
 		}
 		// A base from a star-free segment is a complete file name the pattern
 		// names outright, so it is a legitimate path to probe with. A base from a
@@ -486,21 +487,25 @@ func probePaths(cfg *config.Config) []string {
 // the exact case the allowlist uses. Case matters: an allowlist may contain both
 // ".R" and ".r" as distinct entries.
 func allowlistedSuffix(cfg *config.Config, name string) string {
+	folded := cfg.Normalize(name)
 	for _, ext := range cfg.Extensions {
-		if strings.HasSuffix(name, ext) {
+		if strings.HasSuffix(folded, cfg.Normalize(ext)) {
 			return ext
 		}
 	}
 	return ""
 }
 
-// literalBases returns the literal file-name fragments the patterns are built
-// from: "pom" from "**/pom.xml", "mapper" from "**/*{mapper,dao}*.xml", and
-// "Makefile" from "**/Makefile".
+// literalBases returns the file-name fragments the patterns are built from:
+// "pom.xml" from "**/pom.xml" and "Cargo.toml" from "**/Cargo.toml" 鈥?where the
+// literal elements are concatenated, because together they are the whole file
+// name the pattern pins 鈥?and "mapper"/"xml" from "**/*{mapper,dao}*.xml", where a
+// star splits the segment into separate runs.
 func literalBases(cfg *config.Config) []string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(base string) {
+		base = strings.TrimSpace(base)
 		if base == "" || base == "." || seen[base] {
 			return
 		}
@@ -508,7 +513,7 @@ func literalBases(cfg *config.Config) []string {
 		out = append(out, base)
 	}
 	for _, pr := range cfg.PathRules {
-		pattern := glob.Parse(pr.Pattern)
+		pattern := glob.Parse(cfg.Normalize(pr.Pattern))
 		for _, alt := range pattern.Alternates {
 			if len(alt.Segments) == 0 {
 				continue
@@ -517,27 +522,30 @@ func literalBases(cfg *config.Config) []string {
 			if last.DoubleStar {
 				continue
 			}
-			if whole, ok := glob.SelfSegmentGlob(last); ok && !strings.ContainsAny(whole, "*?") {
-				// A segment with no wildcard pins a whole file name, so the
-				// name itself is what a probe should reuse.
-				add(whole)
-				continue
-			}
-			var current strings.Builder
-			flush := func() {
-				if current.Len() > 0 {
-					add(current.String())
-					current.Reset()
-				}
-			}
+			var whole, run strings.Builder
+			hasStar := false
 			for _, e := range last.Elems {
-				if e.Kind == glob.KindLiteral {
-					current.WriteString(e.Literal)
+				if e.Kind == glob.KindStar {
+					hasStar = true
+					if run.Len() > 0 {
+						add(run.String())
+						run.Reset()
+					}
 					continue
 				}
-				flush()
+				if e.Kind != glob.KindLiteral {
+					continue
+				}
+				whole.WriteString(e.Literal)
+				run.WriteString(e.Literal)
 			}
-			flush()
+			if run.Len() > 0 {
+				add(run.String())
+			}
+			if !hasStar && whole.Len() > 0 {
+				// Nothing splits the segment, so it names one whole file.
+				add(whole.String())
+			}
 		}
 	}
 	return out
@@ -565,7 +573,7 @@ func probeDirs(cfg *config.Config) []string {
 			if len(parts) == 0 {
 				continue
 			}
-			for _, dir := range []string{strings.Join(parts, "/") + "/", strings.Join(parts, "/") + "/dir/"} {
+			for _, dir := range []string{cfg.Normalize(strings.Join(parts, "/")) + "/", cfg.Normalize(strings.Join(parts, "/")) + "/dir/"} {
 				if !seen[dir] {
 					seen[dir] = true
 					dirs = append(dirs, dir)

@@ -39,6 +39,12 @@ type Spec struct {
 	// audited root. Empty disables the reachability check.
 	DocsDir string `json:"docs_dir"`
 
+	// CaseInsensitive says the audited tool lower-cases both the allowlist
+	// entries and the patterns before comparing them. `rulefit` cannot infer
+	// this from the configuration files, and guessing it wrong produces findings
+	// that are wrong in both directions, so it is stated explicitly.
+	CaseInsensitive bool `json:"case_insensitive"`
+
 	// IgnoreExtensions lists extensions that are expected to fall through to the
 	// default rule, so they are reported as accepted rather than as findings.
 	IgnoreExtensions []string `json:"ignore_extensions"`
@@ -71,9 +77,23 @@ type Config struct {
 	// reachability is not checked.
 	DocsDir string
 
+	// CaseInsensitive reports whether the audited tool folds case, which decides
+	// whether patterns and extensions are compared as written or lower-cased.
+	CaseInsensitive bool
+
 	IgnoreExtensions      map[string]bool
 	PlaceholderExtensions map[string]bool
 	IgnorePatterns        []string
+}
+
+// Normalize folds a pattern or a file type to the form the audited tool compares,
+// so that a configuration written in mixed case is judged the way the tool judges
+// it rather than the way it reads.
+func (c *Config) Normalize(s string) string {
+	if c.CaseInsensitive {
+		return strings.ToLower(s)
+	}
+	return s
 }
 
 // PathRule is one entry of the path-to-rule map.
@@ -109,6 +129,7 @@ func LoadSpec(path string) (Spec, error) {
 func Load(root string, spec Spec) (*Config, error) {
 	cfg := &Config{
 		Root:                  root,
+		CaseInsensitive:       spec.CaseInsensitive,
 		IgnoreExtensions:      toSet(spec.IgnoreExtensions),
 		PlaceholderExtensions: toSet(spec.PlaceholderExtensions),
 		IgnorePatterns:        spec.IgnorePatterns,

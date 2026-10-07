@@ -9,7 +9,9 @@
     "map_selector": "path_rule_map"
   },
   "docs_dir": "internal/config/rules/rule_docs",
+  "case_insensitive": true,
   "placeholder_extensions": [],
   "ignore_extensions": [],
   "ignore_patterns": []
 }
+

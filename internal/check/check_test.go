@@ -312,7 +312,8 @@ func TestRunReportsExtensionNotInAllowlist(t *testing.T) {
 }
 
 // TestRunCaseSensitivityIsHonoured documents the trap that the first real audit
-// found: an allowlist holding only ".r" cannot cover a rule written "**/*.R".
+// found: an allowlist holding only ".r" cannot cover a rule written "**/*.R" —
+// unless the audited tool folds case, which is what CaseInsensitive declares.
 func TestRunCaseSensitivityIsHonoured(t *testing.T) {
 	lowerOnly := fixture(t,
 		`[".r", ".go"]`,
@@ -328,6 +329,35 @@ func TestRunCaseSensitivityIsHonoured(t *testing.T) {
 		config.Spec{})
 	if got := findingsByCode(Run(bothCases, false), CodeDeadPattern); len(got) != 0 {
 		t.Fatalf("**/*.R is alive once .R is allowlisted, got %+v", got)
+	}
+}
+
+// TestRunFoldsCaseWhenTheToolDoes pins the fact that made the first audit's
+// headline finding a false positive: alibaba/open-code-review lower-cases both
+// the pattern and the path (and lower-cases the extension when consulting its
+// allowlist), so "**/*.R" against an allowlist entry of ".r" is consistent for
+// that tool, even though it is inconsistent as written text.
+func TestRunFoldsCaseWhenTheToolDoes(t *testing.T) {
+	spec := config.Spec{CaseInsensitive: true}
+
+	cfg := fixture(t,
+		`[".r", ".go"]`,
+		`{"default_rule":"default.md","path_rule_map":{"**/*.R":"go.md","**/*.go":"go.md"}}`,
+		spec)
+	if got := findingsByCode(Run(cfg, false), CodeDeadPattern); len(got) != 0 {
+		t.Fatalf("a case-folding tool makes **/*.R reachable through .r, got %+v", got)
+	}
+	if got := findingsByCode(Run(cfg, false), CodeUnreachableRule); len(got) != 0 {
+		t.Fatalf("go.md is reachable, got %+v", got)
+	}
+
+	// The same configuration must still report a genuinely dead pattern.
+	dead := fixture(t,
+		`[".go"]`,
+		`{"default_rule":"default.md","path_rule_map":{"**/*.go":"go.md","**/*.KT":"java.md"}}`,
+		spec)
+	if got := findingsByCode(Run(dead, false), CodeDeadPattern); len(got) != 1 {
+		t.Fatalf("case folding must not revive **/*.KT, got %+v", got)
 	}
 }
 

@@ -198,14 +198,23 @@ func explain(cfg *config.Config, path string) Resolution {
 	if i := lastDot(path); i >= 0 {
 		res.Extension = path[i:]
 	}
+	// The extension check goes through the same folding as everything else, so a
+	// tool that lower-cases reports .R as reviewed when ".r" is allowlisted.
+	foldedExt := cfg.Normalize(res.Extension)
 	for _, ext := range cfg.Extensions {
-		if ext == res.Extension {
+		if cfg.Normalize(ext) == foldedExt {
 			res.Reviewed = true
 			break
 		}
 	}
-	for _, pr := range cfg.PathRules {
-		if !match(pr.Pattern, path) {
+	// Both sides are folded exactly the way the audited tool folds them: the
+	// pattern is already normalized in the loaded config, and the path has to be
+	// folded here. Folding the pattern again is harmless and keeps this correct
+	// even if a caller hands over a config that was not normalized.
+	foldedPath := cfg.Normalize(path)
+	for i := range cfg.PathRules {
+		pr := &cfg.PathRules[i]
+		if !match(cfg.Normalize(pr.Pattern), foldedPath) {
 			continue
 		}
 		if res.Pattern == "" {
