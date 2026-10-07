@@ -1,5 +1,5 @@
 // Package check turns a resolved configuration into findings. Every finding is
-// derived from the configuration itself 鈥?no repository scan, no guessing 鈥?so
+// derived from the configuration itself 闂?no repository scan, no guessing 闂?so
 // the same input always produces the same output, which is what makes the tool
 // usable as a CI gate.
 package check
@@ -62,6 +62,9 @@ type Finding struct {
 	// Index and Index2 are the declaration positions in the path-to-rule map.
 	Index  int `json:"index,omitempty"`
 	Index2 int `json:"index2,omitempty"`
+	// Line and Line2 are the source lines of the patterns in the rules file.
+	Line  int `json:"line,omitempty"`
+	Line2 int `json:"line2,omitempty"`
 }
 
 // Result is the complete outcome of one audit.
@@ -169,6 +172,13 @@ func checkShadows(cfg *config.Config, patterns []glob.Pattern, res *Result) {
 			if witness == nil {
 				continue
 			}
+			// KindEarlierUnreachable is the healthy specific-before-general
+			// arrangement: the specific rule is consulted first and the general one
+			// still covers everything else. Reporting it would flag nearly every
+			// well-ordered map and bury the findings that matter.
+			if witness.Confidence == glob.ConfidenceExact && witness.Kind == glob.KindEarlierUnreachable {
+				continue
+			}
 			res.Findings = append(res.Findings, shadowFinding(left, right, i, j, witness))
 		}
 	}
@@ -184,20 +194,22 @@ func shadowFinding(left, right config.PathRule, i, j int, w *glob.Witness) Findi
 		Rule2:    right.Rule,
 		Index:    i,
 		Index2:   j,
+		Line:     left.Line,
+		Line2:    right.Line,
 		Witness:  w.Path,
 		Proven:   w.Confidence == glob.ConfidenceExact,
 	}
 	if !f.Proven {
-		f.Message = fmt.Sprintf("%q (line %d) and %q (line %d) overlap, but no concrete path could be built to show which rule wins", left.Pattern, i+1, right.Pattern, j+1)
+		f.Message = fmt.Sprintf("%q (line %d) and %q (line %d) overlap, but no concrete path could be built to show which rule wins", left.Pattern, left.Line, right.Pattern, right.Line)
 		return f
 	}
 	switch w.Kind {
-	case glob.KindAShadowsB:
-		f.Message = fmt.Sprintf("%q (line %d) already claims every path of %q (line %d); %s can never be selected", left.Pattern, i+1, right.Pattern, j+1, right.Rule)
-	case glob.KindBShadowsA:
-		f.Message = fmt.Sprintf("%q (line %d) covers everything %q (line %d) claims and more; %s wins on its own paths", right.Pattern, j+1, left.Pattern, i+1, left.Rule)
+	case glob.KindLaterUnreachable:
+		f.Message = fmt.Sprintf("%q (line %d) already claims every path of %q (line %d); %s can never be selected", left.Pattern, left.Line, right.Pattern, right.Line, right.Rule)
+	case glob.KindEarlierUnreachable:
+		f.Message = fmt.Sprintf("%q (line %d) covers everything %q (line %d) claims and more; %s wins on its own paths", right.Pattern, right.Line, left.Pattern, left.Line, left.Rule)
 	default:
-		f.Message = fmt.Sprintf("%q (line %d) and %q (line %d) share paths; the first declared wins there, so %s is unreachable for them", left.Pattern, i+1, right.Pattern, j+1, right.Rule)
+		f.Message = fmt.Sprintf("%q (line %d) and %q (line %d) share paths; the first declared wins there, so %s is unreachable for them", left.Pattern, left.Line, right.Pattern, right.Line, right.Rule)
 	}
 	return f
 }
@@ -384,10 +396,11 @@ func checkDeadPatterns(cfg *config.Config, patterns []glob.Pattern, res *Result)
 		dead = append(dead, Finding{
 			Code:     CodeDeadPattern,
 			Severity: SeverityError,
-			Message:  fmt.Sprintf("pattern %q matches no allowlisted file type, so rule %q can never be selected", pr.Pattern, pr.Rule),
+			Message:  fmt.Sprintf("pattern %q (line %d) matches no allowlisted file type, so rule %q can never be selected", pr.Pattern, pr.Line, pr.Rule),
 			Pattern:  pr.Pattern,
 			Rule:     pr.Rule,
 			Index:    i,
+			Line:     pr.Line,
 			Proven:   true,
 		})
 	}
@@ -414,10 +427,15 @@ func checkDeadPatterns(cfg *config.Config, patterns []glob.Pattern, res *Result)
 // probePaths builds the file shapes that path rules can key on, then places each
 // of them under the directory prefixes the rules name.
 //
-// Every probe is derived from the allowlist alone. That is deliberate: probes
-// taken from the patterns themselves would let a pattern certify itself, which
-// is how a whole-file rule such as "**/*.kt" would look alive even though no
-// allowlisted file type can ever be a ".kt" file.
+// Names come from two sources, and both are needed:
+//
+//   - one generic probe per allowlisted extension, which is what catches a
+//     pattern pinning an extension the allowlist does not contain;
+//   - the literal file-name fragments the patterns themselves use, combined with
+//     the allowlisted extensions, which is what keeps a whole-file rule such as
+//     "**/pom.xml" from looking dead. The extension side of a combined probe
+//     still comes from the allowlist, so a pattern cannot certify itself:
+//     "**/*.kt" produces no probe matching it, because ".kt" is not allowlisted.
 func probePaths(cfg *config.Config) []string {
 	var names []string
 	seen := map[string]bool{}
@@ -437,14 +455,89 @@ func probePaths(cfg *config.Config) []string {
 		add(bare)
 		add(strings.ToUpper(bare))
 		add(strings.ToLower(bare))
-		// Directory-anchored rules such as "**/.github/**" need a directory
-		// probe too, which the prefix loop below supplies.
+	}
+
+	for _, base := range literalBases(cfg) {
+		for _, ext := range cfg.Extensions {
+			// "pom" + ".xml" is the probe that proves "**/pom.xml" is alive, and
+			// it is still a path the allowlist genuinely permits.
+			add(base + ext)
+			add(strings.ToLower(base) + ext)
+		}
+		// A base from a star-free segment is a complete file name the pattern
+		// names outright, so it is a legitimate path to probe with. A base from a
+		// star pattern is only a fragment: adding it alone would let ".kt"
+		// certify "**/*.kt", so it needs an allowlisted extension to qualify.
+		if !strings.HasPrefix(base, ".") || allowlistedSuffix(cfg, base) != "" {
+			add(base)
+		}
 	}
 
 	var out []string
 	for _, dir := range probeDirs(cfg) {
 		for _, name := range names {
 			out = append(out, dir+name)
+		}
+	}
+	return out
+}
+
+// allowlistedSuffix returns the allowlisted extension that a name ends with, in
+// the exact case the allowlist uses. Case matters: an allowlist may contain both
+// ".R" and ".r" as distinct entries.
+func allowlistedSuffix(cfg *config.Config, name string) string {
+	for _, ext := range cfg.Extensions {
+		if strings.HasSuffix(name, ext) {
+			return ext
+		}
+	}
+	return ""
+}
+
+// literalBases returns the literal file-name fragments the patterns are built
+// from: "pom" from "**/pom.xml", "mapper" from "**/*{mapper,dao}*.xml", and
+// "Makefile" from "**/Makefile".
+func literalBases(cfg *config.Config) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(base string) {
+		if base == "" || base == "." || seen[base] {
+			return
+		}
+		seen[base] = true
+		out = append(out, base)
+	}
+	for _, pr := range cfg.PathRules {
+		pattern := glob.Parse(pr.Pattern)
+		for _, alt := range pattern.Alternates {
+			if len(alt.Segments) == 0 {
+				continue
+			}
+			last := alt.Segments[len(alt.Segments)-1]
+			if last.DoubleStar {
+				continue
+			}
+			if whole, ok := glob.SelfSegmentGlob(last); ok && !strings.ContainsAny(whole, "*?") {
+				// A segment with no wildcard pins a whole file name, so the
+				// name itself is what a probe should reuse.
+				add(whole)
+				continue
+			}
+			var current strings.Builder
+			flush := func() {
+				if current.Len() > 0 {
+					add(current.String())
+					current.Reset()
+				}
+			}
+			for _, e := range last.Elems {
+				if e.Kind == glob.KindLiteral {
+					current.WriteString(e.Literal)
+					continue
+				}
+				flush()
+			}
+			flush()
 		}
 	}
 	return out

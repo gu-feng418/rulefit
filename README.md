@@ -61,10 +61,10 @@ debugging:
 $ rulefit explain --config examples/opencodereview.json --path package.json
 path:      package.json
 reviewed:  true
-rule:      json.md
-matched:   "**/*.{json,json5}" (line 35 of the path rule map)
+rule:      package_json.md
+matched:   "**/package.json" (line 8)
 also matches (never consulted, first match wins):
-  **/package.json                          line 52   package_json.md
+  **/*.{json,json5}                        line 11   json.md
 ```
 
 Exit status is `0` when nothing fails, `1` when findings fail the run, and `2`
@@ -73,6 +73,22 @@ for usage errors, so it drops straight into CI:
 ```yaml
 - run: go run ./cmd/rulefit check --config .rulefit.json --strict
 ```
+
+## What it found on its first real configuration
+
+Pointing it at `alibaba/open-code-review` turned up a genuine inconsistency: the
+rule map declares `"**/*.R": "r.md"` on line 37, the allowlist contains `".r"` but
+not `".R"`, and the tool lower-cases patterns before matching — so the rule and its
+allowlist entry disagree, and `r.md` reads as unreachable.
+
+That audit also found two real bugs in `rulefit` itself, both now pinned by tests:
+every whole-file rule (`**/pom.xml`, `**/package.json`) was reported as dead
+because probes were derived from the allowlist alone, and every reported line
+number was off by the depth of the selected JSON subtree.
+
+The full report, the reasoning, and the false positives that were removed rather
+than shipped are written up in
+[docs/findings/opencodereview-2026-10.md](docs/findings/opencodereview-2026-10.md).
 
 ## Configuration
 
@@ -119,11 +135,14 @@ behaviour, and `rulefit` reports findings against line numbers in that order.
 | `**` | zero or more whole path segments |
 | `\x` | the literal character `x` |
 
-Matching is byte-oriented and **case-sensitive**. Real configuration files often
-lowercase patterns and paths before matching (this is what
-`alibaba/open-code-review` does); if yours does, lowercase both sides of your
-configuration before auditing, or `**/*.R` will be reported as dead when it is
-not.
+Matching is byte-oriented and **case-sensitive**. This matters more than it
+sounds: the first real configuration audited contained `"**/*.R": "r.md"` against
+an allowlist entry of `".r"`, which is the inconsistency
+[docs/findings/opencodereview-2026-10.md](docs/findings/opencodereview-2026-10.md)
+is about. Real tools often lowercase patterns and paths before matching; if yours
+does, note that `rulefit` audits the *text* of the configuration, so it reports the
+mismatch and leaves the decision to you — either fix the pattern or change the
+matching.
 
 ## Scope and non-goals
 
@@ -146,11 +165,20 @@ guess at:
 
 ## Status
 
-Early but usable: the engine, the CLI, tests and the real-configuration check are
+Early but usable: the engine, the CLI, tests and one real-configuration audit are
 in place. The collision engine decides overlap with a product construction over
-the two globs; every non-trivial behavioural claim in the tests is a property
-(`TestSegmentsOverlapAgreesWithMatching`, `TestFindOverlap`) rather than a golden
-string, so correctness does not depend on my reading of a specific config.
+the two globs, and containment is measured by constructing paths and checking them
+with the matcher rather than asserted, so a finding is only ever reported after
+concrete verification. Every non-trivial behavioural claim in the tests is a
+property (`TestSegmentsOverlapAgreesWithMatching`, `TestFindOverlap`,
+`TestRunKeepsWholeFileNameRulesAlive`) rather than a golden string, so correctness
+does not depend on one particular config.
+
+The first real audit also found three bugs in this tool, all now pinned by tests.
+That history is in [docs/design.md](docs/design.md) and
+[docs/findings/opencodereview-2026-10.md](docs/findings/opencodereview-2026-10.md)
+rather than tidied away, because a tool whose selling point is provable claims
+should be honest about how it earned them.
 
 Planned next, in order:
 
@@ -164,8 +192,8 @@ Planned next, in order:
 
 Parts of this repository were written with AI assistance, and the maintainer
 reviews and can explain every line. The design rationale — why overlap detection
-is a product construction instead of a probe heuristic, and which four bugs the
-property tests caught while it was built — is written up in
+is a product construction instead of a probe heuristic, and which bugs the
+property tests and the first real audit caught — is written up in
 [docs/design.md](docs/design.md). Bug reports that point at places where the
 reasoning is wrong are especially welcome.
 

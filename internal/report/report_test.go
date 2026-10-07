@@ -28,6 +28,8 @@ func sampleResult() *check.Result {
 				Proven:   true,
 				Index:    5,
 				Index2:   2,
+				Line:     8,
+				Line2:    11,
 			},
 			{
 				Code:     check.CodeShadowedRule,
@@ -153,7 +155,18 @@ func TestWriteSARIFExpandsAggregatedFindings(t *testing.T) {
 	if levels["error"] != 1 || levels["warning"] != 2 || levels["note"] != 2 {
 		t.Fatalf("unexpected level counts: %v", levels)
 	}
-	if doc.Runs[0].Results[0].Locations[0].PhysicalLocation.Region.StartLine == 0 {
-		t.Fatalf("a finding with a declaration index should carry a line number")
+	// The dead-pattern finding carries a line; the sorted order puts errors first,
+	// and SARIF must report the pattern's real source line, not its index.
+	asserted := false
+	for _, r := range doc.Runs[0].Results {
+		if r.RuleID == check.CodeShadowedRule && len(r.Locations) > 0 && r.Locations[0].PhysicalLocation.Region.StartLine != 0 {
+			if got := r.Locations[0].PhysicalLocation.Region.StartLine; got != 8 {
+				t.Fatalf("SARIF should carry the pattern's real source line (8), got %d", got)
+			}
+			asserted = true
+		}
+	}
+	if !asserted {
+		t.Fatalf("no SARIF result carried a source line")
 	}
 }

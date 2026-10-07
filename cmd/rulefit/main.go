@@ -159,14 +159,17 @@ func runExplain(args []string) int {
 	fmt.Printf("reviewed:  %v\n", resolution.Reviewed)
 	fmt.Printf("rule:      %s\n", resolution.Rule)
 	if resolution.Pattern != "" {
-		fmt.Printf("matched:   %q (line %d of the path rule map)\n", resolution.Pattern, resolution.Index+1)
+		fmt.Printf("matched:   %q (line %d)\n", resolution.Pattern, resolution.Line)
 	} else {
 		fmt.Println("matched:   no pattern; the default rule applies")
+	}
+	if !resolution.Reviewed {
+		fmt.Printf("note:      %s is not in the file-type allowlist, so the rule above is never consulted\n", resolution.Extension)
 	}
 	if len(resolution.AlsoMatched) > 0 {
 		fmt.Println("also matches (never consulted, first match wins):")
 		for _, m := range resolution.AlsoMatched {
-			fmt.Printf("  %-40s line %-4d %s\n", m.Pattern, m.Index+1, m.Rule)
+			fmt.Printf("  %-40s line %-4d %s\n", m.Pattern, m.Line, m.Rule)
 		}
 	}
 	return 0
@@ -179,7 +182,7 @@ type Resolution struct {
 	Reviewed    bool    `json:"reviewed"`
 	Rule        string  `json:"rule"`
 	Pattern     string  `json:"pattern,omitempty"`
-	Index       int     `json:"index,omitempty"`
+	Line        int     `json:"line,omitempty"`
 	AlsoMatched []Match `json:"also_matched,omitempty"`
 }
 
@@ -187,7 +190,7 @@ type Resolution struct {
 type Match struct {
 	Pattern string `json:"pattern"`
 	Rule    string `json:"rule"`
-	Index   int    `json:"index"`
+	Line    int    `json:"line"`
 }
 
 func explain(cfg *config.Config, path string) Resolution {
@@ -201,17 +204,17 @@ func explain(cfg *config.Config, path string) Resolution {
 			break
 		}
 	}
-	for i, pr := range cfg.PathRules {
+	for _, pr := range cfg.PathRules {
 		if !match(pr.Pattern, path) {
 			continue
 		}
 		if res.Pattern == "" {
 			res.Pattern = pr.Pattern
 			res.Rule = pr.Rule
-			res.Index = i
+			res.Line = pr.Line
 			continue
 		}
-		res.AlsoMatched = append(res.AlsoMatched, Match{Pattern: pr.Pattern, Rule: pr.Rule, Index: i})
+		res.AlsoMatched = append(res.AlsoMatched, Match{Pattern: pr.Pattern, Rule: pr.Rule, Line: pr.Line})
 	}
 	if res.Pattern == "" {
 		res.Rule = cfg.DefaultRule

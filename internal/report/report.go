@@ -179,8 +179,8 @@ func WriteSARIF(w io.Writer, res *check.Result, rulesFile, allowlistFile string)
 				loc := sarifLocation{PhysicalLocation: sarifPhysicalLocation{
 					ArtifactLocation: sarifArtifactLocation{URI: uri},
 				}}
-				if f.Index > 0 || f.Pattern != "" {
-					loc.PhysicalLocation.Region = &sarifRegion{StartLine: f.Index + 1}
+				if f.Line > 0 {
+					loc.PhysicalLocation.Region = &sarifRegion{StartLine: f.Line}
 				}
 				result.Locations = []sarifLocation{loc}
 			}

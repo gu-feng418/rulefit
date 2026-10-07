@@ -6,6 +6,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -79,6 +80,9 @@ type Config struct {
 type PathRule struct {
 	Pattern string
 	Rule    string
+	// Line is the 1-based line of the pattern inside the rules file, so that a
+	// report can point at something a human can open. Zero when unknown.
+	Line int
 }
 
 // LoadSpec reads the audit configuration. A missing file is an error: silently
@@ -137,11 +141,11 @@ func Load(root string, spec Spec) (*Config, error) {
 		}
 	}
 	if spec.Rules.MapSelector != "" {
-		node, err := selectNode(rulesRaw, spec.Rules.MapSelector)
+		node, lineOffset, err := resolveNode(rulesRaw, spec.Rules.MapSelector)
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", spec.Rules.File, err)
 		}
-		cfg.PathRules, err = decodeOrderedMap(node)
+		cfg.PathRules, err = decodeOrderedMap(node, lineOffset)
 		if err != nil {
 			return nil, fmt.Errorf("%s: path rule map: %w", spec.Rules.File, err)
 		}
@@ -190,10 +194,83 @@ func selectNode(raw []byte, selector string) (json.RawMessage, error) {
 	return current, nil
 }
 
+// resolveNode walks a dotted selector and returns the selected node's raw JSON
+// along with the line offset needed to turn a position inside that subtree into a
+// real line in the original document.
+//
+// The offset is computed by counting the newlines before the value itself: the
+// decoder's InputOffset sits on the separating comma, not on the first byte of
+// the value, so counting from there would overstate every line.
+func resolveNode(raw []byte, selector string) (json.RawMessage, int, error) {
+	if selector == "" || selector == "[]" || selector == "." {
+		return json.RawMessage(raw), 0, nil
+	}
+	var (
+		node       json.RawMessage
+		lineOffset int
+	)
+	for _, part := range strings.Split(selector, ".") {
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		if _, err := dec.Token(); err != nil {
+			return nil, 0, fmt.Errorf("selector %q: invalid JSON: %w", selector, err)
+		}
+		found := false
+		lineOffset = 0
+		for dec.More() {
+			keyToken, err := dec.Token()
+			if err != nil {
+				return nil, 0, fmt.Errorf("selector %q: %w", selector, err)
+			}
+			var value json.RawMessage
+			if err := dec.Decode(&value); err != nil {
+				return nil, 0, fmt.Errorf("selector %q: %w", selector, err)
+			}
+			if key, ok := keyToken.(string); ok && key == part {
+				node = value
+				// The value's own leading newlines belong to the offset, so only
+				// the whitespace that precedes the value counts here.
+				if start := dec.InputOffset() - int64(len(value)); start > 0 {
+					lineOffset = newlinesBefore(raw, start)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, 0, fmt.Errorf("selector %q: key %q not found", selector, part)
+		}
+		raw = node
+	}
+	return node, lineOffset, nil
+}
+
+// newlinesBefore counts the complete lines before a byte offset in raw. Both
+// "\n" and "\r\n" are treated as one line ending, because a configuration file
+// checked out on Windows has CRLF while one read from a Git object has LF, and
+// the line a human sees must be the same either way.
+func newlinesBefore(raw []byte, offset int64) int {
+	if offset < 0 || offset > int64(len(raw)) {
+		return 0
+	}
+	n := 0
+	for i := int64(0); i < offset; i++ {
+		switch raw[i] {
+		case '\n':
+			n++
+		case '\r':
+			if i+1 >= offset || raw[i+1] != '\n' {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // decodeOrderedMap preserves the declaration order of a JSON object's keys,
-// which is the order a first-match-wins resolver relies on.
-func decodeOrderedMap(raw []byte) ([]PathRule, error) {
-	dec := json.NewDecoder(strings.NewReader(string(raw)))
+// which is the order a first-match-wins resolver relies on, and records the line
+// each key appears on so reports can point at the file.
+func decodeOrderedMap(raw []byte, lineOffset int) ([]PathRule, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
 	token, err := dec.Token()
 	if err != nil {
 		return nil, err
@@ -207,6 +284,10 @@ func decodeOrderedMap(raw []byte) ([]PathRule, error) {
 		if err != nil {
 			return nil, err
 		}
+		// InputOffset sits right after the key token, which is on the key's own
+		// line; taking it after the value instead would count the following
+		// newline and shift every pattern by one.
+		keyOffset := dec.InputOffset()
 		key, ok := keyToken.(string)
 		if !ok {
 			return nil, fmt.Errorf("object key is not a string: %v", keyToken)
@@ -215,7 +296,11 @@ func decodeOrderedMap(raw []byte) ([]PathRule, error) {
 		if err := dec.Decode(&rule); err != nil {
 			return nil, fmt.Errorf("value for %q is not a string: %w", key, err)
 		}
-		out = append(out, PathRule{Pattern: key, Rule: rule})
+		out = append(out, PathRule{
+			Pattern: key,
+			Rule:    rule,
+			Line:    lineOffset + newlinesBefore(raw, keyOffset) + 1,
+		})
 	}
 	return out, nil
 }

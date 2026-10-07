@@ -116,18 +116,37 @@ internal/report        text / json / sarif 三种渲染
 
 开发过程中这些性质测试真的抓到了四个 bug：星号匹配的记忆化键冲突、`**` 与 `*` 的语义混淆、字面量锚点自证（`**/*.kt` 因为探针里出现 `.kt` 而看起来"活着"）、以及 `**` 段级构造的方向错误。诚实地说，这个模块的正确性来自"性质测试 + 保守回退"，而不是来自一次写对。
 
-## 六、在真实仓库上的第一次运行
+## 六、第一次跑真实配置（上游 main，2026-10-07）
 
-对 `alibaba/open-code-review` 的当前配置（`examples/opencodereview.json`）跑出来的结果，是设计文档里最该被检验的部分：
+把这套东西指向一份**不是为它写的**配置，结果比单元测试更有价值：查出上游 1 个真实不一致，同时查出**工具自己 3 个 bug**。完整证据见
+[`docs/findings/opencodereview-2026-10.md`](findings/opencodereview-2026-10.md)，这里只留结论。
 
-- **5 条遮蔽警告**，其中一条是实质缺陷：
-  `**/*.{json,json5}`（第 35 行）声明在 `**/package.json`（第 52 行）之前，
-  所以 `package.json` 实际由 `json.md` 评审，`package_json.md` **永远不会生效**。
-  这条用 `rulefit explain --path package.json` 可以直接复现。
-- **7 条 dead-pattern + 7 条 unreachable-rule**：`.R`、`Cargo.toml`、`build.gradle`、`composer.json`、`package.json`、`pom.xml`、`*{mapper,dao}*.xml` 这些模式要求的文件名，其扩展名不在白名单里（`.R` 是大写，白名单是小写 `.r`），因此对应的规则文档不可达。
-- **36/115 个扩展名没有语言规则**，落到 `default.md`。
+**上游的真实发现（1 条）**：`system_rules.json` 第 37 行写 `"**/*.R": "r.md"`，而白名单里只有小写 `".r"`、没有 `".R"`。该工具在匹配前会把模式和路径都转小写，所以这个规则"实际能用"，但它与对应的白名单条目对不上——`rulefit` 报告这个不一致，由人来决定改模式还是改白名单。另有 37/115 个扩展名没有语言规则、落到 `default.md`（属于产品决策，所以只是 note）。
 
-前两类是可修的配置缺陷，第三类是需要产品决策的问题（要不要为 `.cs`、`.rb`、`.vue` 写规则）。**这正是工具的价值：把"没人知道"变成"有清单、能分配任务、能被 CI 守住"。**
+**工具自己的 3 个 bug**：
+
+| # | 症状 | 根因 | 现在由谁守住 |
+| --- | --- | --- | --- |
+| 1 | `**/pom.xml`、`**/package.json` 这类整文件名规则全被报成 dead-pattern | 探针只从白名单派生，没从模式自身的字面量派生 | `TestRunKeepsWholeFileNameRulesAlive`、`TestRunReportsExtensionNotInAllowlist` |
+| 2 | 报的行号偏小（说第 34 行，实际第 37 行） | 行号由"在选中子树里排第几"推算，而 JSON 里 `path_rule_map` 前面还有 3 行 | `TestRunReportsSourceLines`、`TestLoadKeepsDeclarationOrder` |
+| 3 | 5 条 shadowed-rule 误报，方向还说反了 | 只测出"重叠"，把"具体规则在前、通用兜底在后"这种健康写法也报了 | `TestRunFlagsTheGeneralBeforeSpecificOrdering`、`TestRunKeepsWholeFileNameRulesAlive` |
+
+第 3 个是**语义**问题而不是代码 bug。第一版只在报告里写"两个模式竞争"，没有区分方向；而对一个 first-match-wins 的映射，唯一值得报警的方向是"**前面的模式已经覆盖了后面模式的所有路径**"，也就是后面的规则永远选不中。反过来（前面更窄、后面是兜底）恰恰是正确写法。
+
+修法不是改文案，而是把方向编进**类型名**：
+
+| Kind | 含义 | 是否报告 |
+| --- | --- | --- |
+| `earlier-unreachable` | 前面的模式更窄，后面的模式是它的兜底 | 不报 |
+| `later-unreachable` | 前面的模式已覆盖后面模式的全部路径，后面的规则永不生效 | 报告（warning） |
+| `partial` | 两者共享部分路径，谁赢取决于具体路径 | 报告（warning） |
+
+旧命名是 `a-shadows-b` / `b-shadows-a`——这次开发里我**把它读反了两次**，多花了两轮调试。改名之后，这类错误在代码审查阶段就能看出来，而不是靠跑测试才发现。
+
+顺带修掉两处相关的正确性问题：
+
+- **包含关系不能在白名单过滤之后再测**。两侧都被过滤成同一批"可接受路径"时，更宽的模式看起来和更窄的一样宽，方向就判反。现在先用未过滤候选集判定包含关系，再用白名单谓词判定"这条路径工具真的会处理"，两件事分开。
+- **`\n` 与 `\r\n` 都要算换行**。Windows 检出是 CRLF、从 Git 对象读出来是 LF，同一份配置必须报同一个行号。
 
 ## 七、路线图
 
@@ -140,5 +159,6 @@ internal/report        text / json / sarif 三种渲染
 ## 八、开发日志（可复核）
 
 - 语言/工具链：Go 1.27.1（便携版，全部在 E 盘），零第三方依赖。
-- 测试：`go test ./... -cover`，当前覆盖率 glob 67.6%、check 80.9%、config 86.3%、report 93.1%、cmd 68.5%。
-- 提交前的固定动作：`go vet ./...` + `go test ./...` + 对 `testdata/fixture-repo` 跑一次 `rulefit check`（CI 同款）。
+- 测试：`go test ./... -cover`，当前覆盖率 check 82.9%、config 84.2%、report 93.1%、cmd 70.6%、glob 64.4%。
+- 提交前的固定动作：`gofmt -l .`（必须为空）+ `go vet ./...` + `go test ./...` + 对 `testdata/fixture-repo` 与 `testdata/fixture-defects` 各跑一次 `rulefit check`（CI 同款）。
+- 两个 fixture 的分工：`fixture-repo` 是**健康**配置（CI 用它证明工具不误报），`fixture-defects` 是一个**故意有病**的配置（三类发现各一条，用来证明工具真的会报）。

@@ -10,26 +10,31 @@ const (
 	// patterns match and that the allowlist accepts.
 	ConfidenceExact Confidence = "exact"
 	// ConfidenceUnknown means the two patterns provably overlap, but no concrete
-	// path could be constructed — typically because one side is anchored on a
+	// path could be constructed 鈥?typically because one side is anchored on a
 	// whole file name ("**/pom.xml") while the other pins an extension. The
 	// finding is still worth reporting, but it must be reported as unproven.
 	ConfidenceUnknown Confidence = "unknown"
 )
 
-// Kind classifies an overlap. It is what turns "these two patterns both match
-// something" into an actionable statement about rule selection, which for a
-// first-match-wins map is decided by the declaration order.
+// Kind classifies an overlap in the terms that matter for a first-match-wins
+// resolver: which rule, if any, can never be selected. The names say exactly
+// that, because an earlier version of this code used "a-shadows-b" and the
+// direction was easy to read backwards 鈥?twice.
 type Kind string
 
 const (
-	// KindAShadowsB means every admissible path A matches is also matched by B.
-	// A is declared first, so B's rule can never be selected.
-	KindAShadowsB Kind = "a-shadows-b"
-	// KindBShadowsA means B claims every admissible path A claims and more.
-	// A still wins on its own (narrower) paths.
-	KindBShadowsA Kind = "b-shadows-a"
+	// KindLaterUnreachable means the earlier pattern A matches every admissible
+	// path the later pattern B matches. A is consulted first, so B's rule can
+	// never be selected: the map has a rule that does nothing.
+	KindLaterUnreachable Kind = "later-unreachable"
+	// KindEarlierUnreachable means B matches every admissible path A matches and
+	// more. A still wins on its own, narrower paths, so this is the healthy
+	// specific-before-general arrangement rather than a defect.
+	KindEarlierUnreachable Kind = "earlier-unreachable"
 	// KindPartial means the two patterns share some admissible paths but neither
-	// contains the other, so which rule wins depends on the specific path.
+	// contains the other, so which rule wins depends on the specific path. When
+	// the later pattern is the specific one, its rule is silently skipped for
+	// exactly the files it was written for.
 	KindPartial Kind = "partial"
 )
 
@@ -63,36 +68,68 @@ const maxInstantiations = 512
 // from each pattern and checks them against the other with the matcher, so Kind
 // is only ever reported after concrete verification.
 func FindOverlap(a, b Pattern, accept func(path string) bool) *Witness {
-	aPaths := verifiedPaths(a, accept)
-	bPaths := verifiedPaths(b, accept)
-	shared := countShared(a, b, aPaths, accept)
+	// Every path either pattern can produce, checked against the other. Both
+	// directions matter: a whole-file pattern such as "**/package.json" only
+	// appears in its own candidate list, not in the one derived from
+	// "**/*.{json,json5}".
+	candidates := append(candidatePaths(a), candidatePaths(b)...)
+	aReach := verifiedPaths(a, nil)
+	bReach := verifiedPaths(b, nil)
+	shared := 0
+	witnessPath := ""
+	seenCandidate := map[string]bool{}
+	for _, candidate := range candidates {
+		if seenCandidate[candidate] {
+			continue
+		}
+		seenCandidate[candidate] = true
+		if !a.Match(candidate) || !b.Match(candidate) {
+			continue
+		}
+		if accept != nil && !accept(candidate) {
+			continue
+		}
+		shared++
+		if witnessPath == "" || preferred(candidate, witnessPath) {
+			witnessPath = candidate
+		}
+	}
+	if shared == 0 {
+		if structuralOverlap(a, b) {
+			return &Witness{Confidence: ConfidenceUnknown, Kind: KindPartial}
+		}
+		return nil
+	}
 
-	aContained := len(aPaths) > 0 && countMatching(b, aPaths) == len(aPaths)
-	bContained := len(bPaths) > 0 && countMatching(a, bPaths) == len(bPaths)
+	// Containment is measured without the allowlist gate: narrowing both sides to
+	// the same admissible subset first would make a wider pattern look exactly as
+	// wide as a narrower one, and report the ordering relationship backwards.
+	aContained := len(aReach) > 0 && countMatching(b, aReach) == len(aReach)
+	bContained := len(bReach) > 0 && countMatching(a, bReach) == len(bReach)
 
 	switch {
 	case aContained && bContained:
-		// Identical reach; A is declared first, so A's rule always wins.
-		return &Witness{Path: firstShared(a, b, aPaths, accept), Confidence: ConfidenceExact, Kind: KindAShadowsB, Verified: shared}
-	case aContained:
-		return &Witness{Path: firstShared(a, b, aPaths, accept), Confidence: ConfidenceExact, Kind: KindAShadowsB, Verified: shared}
+		// Identical reach; A is declared first, so A's rule always wins and B's
+		// rule is dead for every path it claims.
+		return &Witness{Path: witnessPath, Confidence: ConfidenceExact, Kind: KindLaterUnreachable, Verified: shared}
 	case bContained:
-		return &Witness{Path: firstShared(a, b, aPaths, accept), Confidence: ConfidenceExact, Kind: KindBShadowsA, Verified: shared}
-	case shared > 0:
-		return &Witness{Path: firstShared(a, b, aPaths, accept), Confidence: ConfidenceExact, Kind: KindPartial, Verified: shared}
+		// Every path B claims is also A's, and A comes first: B's rule can never
+		// be selected.
+		return &Witness{Path: witnessPath, Confidence: ConfidenceExact, Kind: KindLaterUnreachable, Verified: shared}
+	case aContained:
+		// A is the narrower, earlier rule. It wins where it applies and B still
+		// covers everything else, which is the arrangement a
+		// specific-before-general map relies on.
+		return &Witness{Path: witnessPath, Confidence: ConfidenceExact, Kind: KindEarlierUnreachable, Verified: shared}
+	default:
+		return &Witness{Path: witnessPath, Confidence: ConfidenceExact, Kind: KindPartial, Verified: shared}
 	}
-
-	// No admissible path was constructed. Report a structural overlap only when
-	// the two patterns really do share a path shape; two patterns pinning
-	// different extensions are disjoint and must stay silent.
-	if structuralOverlap(a, b) {
-		return &Witness{Confidence: ConfidenceUnknown, Kind: KindPartial}
-	}
-	return nil
 }
 
-// verifiedPaths returns concrete admissible paths the pattern matches.
-func verifiedPaths(p Pattern, accept func(string) bool) []string {
+// candidatePaths returns concrete paths the pattern matches, without any
+// allowlist filtering, most-specific first. A nil accept on the callers' side
+// means "no filter", which is what the pure pattern-level tests use.
+func candidatePaths(p Pattern) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, alt := range p.Alternates {
@@ -107,10 +144,23 @@ func verifiedPaths(p Pattern, accept func(string) bool) []string {
 			if seen[candidate] || !p.Match(candidate) {
 				continue
 			}
-			if accept == nil || !accept(candidate) {
-				continue
-			}
 			seen[candidate] = true
+			out = append(out, candidate)
+		}
+	}
+	return out
+}
+
+// verifiedPaths returns the paths the pattern matches that also pass accept. A
+// nil accept means "no filter".
+func verifiedPaths(p Pattern, accept func(string) bool) []string {
+	all := candidatePaths(p)
+	if accept == nil {
+		return all
+	}
+	out := make([]string, 0, len(all))
+	for _, candidate := range all {
+		if accept(candidate) {
 			out = append(out, candidate)
 		}
 	}
@@ -135,7 +185,7 @@ func countShared(a, b Pattern, candidates []string, accept func(string) bool) in
 		if !a.Match(candidate) || !b.Match(candidate) {
 			continue
 		}
-		if accept == nil || !accept(candidate) {
+		if accept != nil && !accept(candidate) {
 			continue
 		}
 		n++
@@ -156,7 +206,7 @@ func firstShared(a, b Pattern, candidates []string, accept func(string) bool) st
 		if !a.Match(candidate) || !b.Match(candidate) {
 			continue
 		}
-		if accept == nil || !accept(candidate) {
+		if accept != nil && !accept(candidate) {
 			continue
 		}
 		consider(candidate)
@@ -178,7 +228,7 @@ func firstShared(a, b Pattern, candidates []string, accept func(string) bool) st
 					if !a.Match(candidate) || !b.Match(candidate) {
 						continue
 					}
-					if accept == nil || !accept(candidate) {
+					if accept != nil && !accept(candidate) {
 						continue
 					}
 					consider(candidate)
@@ -216,7 +266,7 @@ func structuralOverlap(a, b Pattern) bool {
 // segmentsOverlap decides whether two segment lists can match a common path.
 //
 // It is a product construction over the two NFA-ish globs. `**` is spontaneous
-// — it can match zero segments — while every other segment consumes text and
+// 鈥?it can match zero segments 鈥?while every other segment consumes text and
 // must therefore be reconciled with the other side, either by matching it
 // character by character or by being absorbed whole by the other side's star.
 //

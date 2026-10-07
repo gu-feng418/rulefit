@@ -25,8 +25,16 @@ jobs:
         run: go vet ./...
       - name: test
         run: go test ./... -cover
-      - name: self-check
+      - name: self-check on a healthy configuration
         run: |
           go run ./cmd/rulefit check \
             --config testdata/fixture-repo/.rulefit.json \
             --root testdata/fixture-repo
+      - name: the defects fixture must still fail
+        run: |
+          if go run ./cmd/rulefit check \
+              --config testdata/fixture-defects/.rulefit.json \
+              --root testdata/fixture-defects; then
+            echo "the defects fixture was expected to fail the run"
+            exit 1
+          fi

@@ -1,8 +1,10 @@
 package check
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gu-feng418/rulefit/internal/config"
@@ -74,29 +76,6 @@ func TestRunReportsShadowingWithAProvenWitness(t *testing.T) {
 	}
 	if res.RoutedExtensions != 2 {
 		t.Fatalf("routed = %d, want 2", res.RoutedExtensions)
-	}
-}
-
-func TestRunDetectsBroadRuleDeclaredBeforeSpecificRule(t *testing.T) {
-	cfg := fixture(t,
-		`[".json"]`,
-		`{"default_rule":"default.md","path_rule_map":{"**/*.json":"java.md","**/package.json":"special.md"}}`,
-		config.Spec{})
-
-	res := Run(cfg, false)
-	shadows := findingsByCode(res, CodeShadowedRule)
-	if len(shadows) != 1 {
-		t.Fatalf("want exactly 1 shadow finding, got %d: %+v", len(shadows), shadows)
-	}
-	f := shadows[0]
-	if f.Pattern != "**/*.json" || f.Pattern2 != "**/package.json" {
-		t.Fatalf("unexpected pair: %+v", f)
-	}
-	if f.Witness != "package.json" {
-		t.Fatalf("witness = %q, want %q", f.Witness, "package.json")
-	}
-	if !f.Proven {
-		t.Fatalf("finding should be proven, got %+v", f)
 	}
 }
 
@@ -262,6 +241,120 @@ func TestRunWithSelectorBasedSpec(t *testing.T) {
 	res := Run(cfg, false)
 	if len(findingsByCode(res, CodeDeadPattern)) != 0 {
 		t.Fatalf("no dead patterns expected: %+v", res.Findings)
+	}
+}
+
+// TestRunKeepsWholeFileNameRulesAlive pins the probe semantics: a rule naming a
+// whole file must stay alive when the allowlist permits that file's extension.
+// Getting this wrong reported every "**/pom.xml"-style rule as dead, which is
+// exactly the false positive that probes taken only from the allowlist produce.
+func TestRunKeepsWholeFileNameRulesAlive(t *testing.T) {
+	cfg := fixture(t,
+		`[".go", ".xml", ".json", ".toml"]`,
+		`{"default_rule":"default.md","path_rule_map":{
+		  "**/pom.xml":"go.md",
+		  "**/package.json":"java.md",
+		  "**/Cargo.toml":"yaml.md",
+		  "**/*{Mapper,Dao}*.xml":"special.md",
+		  "**/*.go":"go.md"}}`,
+		config.Spec{})
+
+	res := Run(cfg, false)
+	if got := findingsByCode(res, CodeDeadPattern); len(got) != 0 {
+		t.Fatalf("whole-file rules with allowlisted extensions must stay alive, got %+v", got)
+	}
+	if got := findingsByCode(res, CodeUnreachableRule); len(got) != 0 {
+		t.Fatalf("no rule document should be unreachable here, got %+v", got)
+	}
+	if got := findingsByCode(res, CodeShadowedRule); len(got) != 0 {
+		t.Fatalf("specific-before-general must not be flagged as a defect, got %+v", got)
+	}
+}
+
+// TestRunFlagsTheGeneralBeforeSpecificOrdering is the counterpart, and the shape
+// of the first real defect rulefit found: a general pattern declared before a
+// specific one silently wins for the files the specific rule was written for.
+func TestRunFlagsTheGeneralBeforeSpecificOrdering(t *testing.T) {
+	cfg := fixture(t,
+		`[".json"]`,
+		`{"default_rule":"default.md","path_rule_map":{
+		  "**/*.json":"json.md",
+		  "**/package.json":"special.md"}}`,
+		config.Spec{})
+
+	res := Run(cfg, false)
+	shadows := findingsByCode(res, CodeShadowedRule)
+	if len(shadows) != 1 {
+		t.Fatalf("want exactly 1 shadow finding, got %d: %+v", len(shadows), shadows)
+	}
+	if shadows[0].Rule2 != "special.md" {
+		t.Fatalf("the finding should name the rule that loses, got %+v", shadows[0])
+	}
+	if !strings.Contains(shadows[0].Message, "special.md can never be selected") {
+		t.Fatalf("message should say which rule loses: %s", shadows[0].Message)
+	}
+}
+
+// TestRunReportsExtensionNotInAllowlist is the other half of that pin: a rule
+// pinning an extension the allowlist does not contain is genuinely dead, and the
+// probe must not manufacture a path for it out of the pattern's own text.
+func TestRunReportsExtensionNotInAllowlist(t *testing.T) {
+	cfg := fixture(t,
+		`[".go"]`,
+		`{"default_rule":"default.md","path_rule_map":{"**/*.go":"go.md","**/*.kt":"java.md"}}`,
+		config.Spec{})
+
+	res := Run(cfg, false)
+	dead := findingsByCode(res, CodeDeadPattern)
+	if len(dead) != 1 || dead[0].Pattern != "**/*.kt" {
+		t.Fatalf("want **/*.kt reported dead, got %+v", dead)
+	}
+}
+
+// TestRunCaseSensitivityIsHonoured documents the trap that the first real audit
+// found: an allowlist holding only ".r" cannot cover a rule written "**/*.R".
+func TestRunCaseSensitivityIsHonoured(t *testing.T) {
+	lowerOnly := fixture(t,
+		`[".r", ".go"]`,
+		`{"default_rule":"default.md","path_rule_map":{"**/*.R":"go.md","**/*.go":"go.md"}}`,
+		config.Spec{})
+	if got := findingsByCode(Run(lowerOnly, false), CodeDeadPattern); len(got) != 1 {
+		t.Fatalf("**/*.R must be dead when only .r is allowlisted, got %+v", got)
+	}
+
+	bothCases := fixture(t,
+		`[".r", ".R", ".go"]`,
+		`{"default_rule":"default.md","path_rule_map":{"**/*.R":"go.md","**/*.go":"go.md"}}`,
+		config.Spec{})
+	if got := findingsByCode(Run(bothCases, false), CodeDeadPattern); len(got) != 0 {
+		t.Fatalf("**/*.R is alive once .R is allowlisted, got %+v", got)
+	}
+}
+
+// TestRunReportsSourceLines checks that findings name the line a human can open,
+// not the pattern's index inside the map.
+func TestRunReportsSourceLines(t *testing.T) {
+	cfg := fixture(t,
+		`[".go", ".json"]`,
+		`{"default_rule":"default.md","path_rule_map":{
+		  "**/*.json":"java.md",
+		  "**/package.json":"special.md",
+		  "**/*.go":"go.md"}}`,
+		config.Spec{})
+
+	res := Run(cfg, false)
+	shadows := findingsByCode(res, CodeShadowedRule)
+	if len(shadows) != 1 {
+		t.Fatalf("want 1 shadow finding, got %+v", shadows)
+	}
+	if shadows[0].Line == 0 || shadows[0].Line2 == 0 {
+		t.Fatalf("findings must carry source lines, got %d and %d", shadows[0].Line, shadows[0].Line2)
+	}
+	if shadows[0].Line2 != shadows[0].Line+1 {
+		t.Fatalf("the two patterns are on adjacent lines, got %d and %d", shadows[0].Line, shadows[0].Line2)
+	}
+	if !strings.Contains(shadows[0].Message, fmt.Sprintf("(line %d)", shadows[0].Line)) {
+		t.Fatalf("message should name the real line: %s", shadows[0].Message)
 	}
 }
 

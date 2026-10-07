@@ -182,12 +182,20 @@ func TestFindOverlap(t *testing.T) {
 		wantKind Kind
 	}{
 		{
-			name:     "workflow rule is contained by the .github catch-all",
+			name:     "a specific rule declared before its general fallback is healthy",
 			a:        ".github/workflows/**/*.{yaml,yml}",
 			b:        ".github/**/*.{yaml,yml}",
 			accept:   acceptYAML,
 			wantPath: ".github/workflows/.yml",
-			wantKind: KindAShadowsB,
+			wantKind: KindEarlierUnreachable,
+		},
+		{
+			name:     "a general rule declared before its specific rule kills the specific one",
+			a:        ".github/**/*.{yaml,yml}",
+			b:        ".github/workflows/**/*.{yaml,yml}",
+			accept:   acceptYAML,
+			wantPath: ".github/workflows/.yml",
+			wantKind: KindLaterUnreachable,
 		},
 		{
 			name:    "different extensions never collide",
@@ -202,20 +210,28 @@ func TestFindOverlap(t *testing.T) {
 			wantNil: true,
 		},
 		{
-			name:     "json5 rides along with the json brace form",
+			name:     "the narrower pattern declared first still wins on its own paths",
+			a:        "**/*.json",
+			b:        "**/*.{json,json5}",
+			accept:   acceptJSON,
+			wantPath: ".json",
+			wantKind: KindEarlierUnreachable,
+		},
+		{
+			name:     "the brace form declared first kills the narrower rule",
 			a:        "**/*.{json,json5}",
 			b:        "**/*.json",
 			accept:   acceptJSON,
 			wantPath: ".json",
-			wantKind: KindAShadowsB,
+			wantKind: KindLaterUnreachable,
 		},
 		{
-			name:     "mapper rule is contained by the plain xml rule",
+			name:     "mapper rule narrows nothing the plain xml rule loses",
 			a:        "**/*{Mapper,Dao}*.xml",
 			b:        "**/*.xml",
 			accept:   acceptXML,
 			wantPath: "Dao.xml",
-			wantKind: KindAShadowsB,
+			wantKind: KindEarlierUnreachable,
 		},
 		{
 			name:     "identical patterns still report (A wins by order)",
@@ -223,7 +239,7 @@ func TestFindOverlap(t *testing.T) {
 			b:        "**/*.go",
 			accept:   func(string) bool { return true },
 			wantPath: ".go",
-			wantKind: KindAShadowsB,
+			wantKind: KindLaterUnreachable,
 		},
 	}
 	for _, tc := range tests {

@@ -57,6 +57,13 @@ func TestLoadKeepsDeclarationOrder(t *testing.T) {
 			t.Fatalf("path rule %d = %q, want %q (declaration order matters for first-match-wins)", i, cfg.PathRules[i].Pattern, want)
 		}
 	}
+	// The pattern's line in the file is what a report shows a human, so it must
+	// be the real line, not the position inside the map.
+	for i, wantLine := range []int{4, 5, 6} {
+		if got := cfg.PathRules[i].Line; got != wantLine {
+			t.Fatalf("path rule %q is on line %d, want %d", cfg.PathRules[i].Pattern, got, wantLine)
+		}
+	}
 }
 
 func TestLoadRejectsAnEmptyAllowlist(t *testing.T) {
